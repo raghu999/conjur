@@ -5,3 +5,6 @@ AllCops:
 
 Style/AndOr:
   EnforcedStyle: conditionals
+
+Layout/MultilineMethodCallIndentation:
+  EnforcedStyle: indented
