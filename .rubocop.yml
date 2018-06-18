@@ -8,3 +8,6 @@ Style/AndOr:
 
 Layout/MultilineMethodCallIndentation:
   EnforcedStyle: indented
+
+Layout/AlignParameters:
+  EnforcedStyle: with_fixed_indentation
