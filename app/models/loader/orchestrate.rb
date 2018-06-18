@@ -160,11 +160,11 @@ module Loader
       # of subject@43868 structured-data element
       def sd_subject pk
         Hash[pk.map do |k, v|
-          [case k
+          [case k.intern
           when :name
             'annotation'
           when :member_id
-            pk[:ownership] == 't' ? 'owner' : 'member'
+            pk.delete(:ownership) == 't' ? 'owner' : 'member'
           else
             k.to_s.chomp "_id"
           end, v]
