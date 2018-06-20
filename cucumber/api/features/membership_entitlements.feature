@@ -72,6 +72,14 @@ Feature: Manage the role entitlements through the API
       }
     ]
     """
+    And the last audit record matches:
+    """
+      <37>1 * * conjur * policy [auth@43868 user="cucumber:user:alice"]
+      [subject@43868 role="cucumber:group:dev/developers" member="cucumber:user:alice"]
+      [action@43868 operation="remove"]
+      cucumber:user:alice removed membership of cucumber:user:alice in cucumber:group:dev/developers
+    """
+    # TBD: should a [policy@] sdid be present?
 
   Scenario: Add a membership without permissions
 
