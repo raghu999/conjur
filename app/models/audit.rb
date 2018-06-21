@@ -4,17 +4,6 @@ require 'time'
 
 module Audit
   class << self
-    {
-      notice: [:info, Syslog::LOG_NOTICE],
-      info: [:info, Syslog::LOG_INFO],
-      warn: [:warn, Syslog::LOG_WARNING]
-    }.each do |meth, details|
-      logger_method, syslog_severity = details
-      define_method meth do |msg, msgid, facility: nil, **data|
-        logger.send logger_method, LogMessage.new(msg, msgid, data, syslog_severity, facility)
-      end
-    end
-
     def logger
       @logger ||= Rails.logger
     end
@@ -35,21 +24,6 @@ module Audit
     AUTH = conjur_sdid 'auth'
     SUBJECT = conjur_sdid 'subject'
     ACTION = conjur_sdid 'action'
-  end
-
-  # This inherits from String in order to preserve compatibility with Ruby's
-  # built-in formatters, which check the class of the parameter (probably as
-  # an optimization).
-  class LogMessage < String
-    def initialize msg, msgid, structured_data = nil, severity = nil, facility = nil
-      super msg
-      @msgid = msgid
-      @structured_data = structured_data
-      @severity = severity
-      @facility = facility
-    end
-
-    attr_reader :msgid, :structured_data, :severity, :facility
   end
 
   # Middleware to store request ID in a thread variable
@@ -87,14 +61,13 @@ module Audit
       # Use the request UUID when called with REST. Otherwise use PID.
       pid = Thread.current[:request_id] || Process.pid
 
-      msgid = msg.msgid if msg.respond_to? :msgid
+      msgid = msg.try :message_id
       sd = format_sd sd
 
-      facility = msg.try(:facility) || 4
+      facility = msg.try(:facility) || Syslog::LOG_AUTH
 
       fields = [timestamp, hostname, progname, pid, msgid, sd, msg]
-      # per RFC5424 priority = severity + facility * 8
-      ["<#{severity + facility * 8}>1", *fields.map {|x| x || '-'}].join(" ") + "\n"
+      ["<#{severity + facility}>1", *fields.map {|x| x || '-'}].join(" ") + "\n"
     end
 
   private
@@ -110,4 +83,3 @@ module Audit
     end
   end
 end
-

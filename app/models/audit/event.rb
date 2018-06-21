@@ -3,6 +3,10 @@ require 'logger'
 
 module Audit
   class Event < Util::Struct
+    abstract_field :facility, :message, :message_id, :severity, :structured_data, :progname
+
+    progname 'conjur'
+
     def log_to logger
       logger.log logger_severity, self, progname
     end
@@ -11,21 +15,19 @@ module Audit
       message
     end
 
-    def progname
-      'conjur'
-    end
-
-    # Return severity as it's understood by Ruby ::Logger
-    def logger_severity
-      SEVERITY_MAP[severity]
-    end
-
     # Pretend this is a String because Ruby's built-in log formatter matches it
     # like this and uses #inspect to print the message otherwise.
     #
     # I suppose it does :reek:ControlParameter, but there isn't much that can be done about it.
     def === other
       (other == String) || super
+    end
+
+    private
+
+    # Return severity as it's understood by Ruby ::Logger
+    def logger_severity
+      SEVERITY_MAP[severity]
     end
 
     SDID = ::Audit::SDID

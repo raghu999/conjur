@@ -2,40 +2,34 @@ require 'util/struct'
 
 module Audit
   class Subject < Util::Struct
-    def self.to_h &proc
-      define_method :to_h, &proc
-    end
-
-    def self.to_s &proc
-      define_method :to_s, &proc
-    end
+    abstract_field :to_h, :to_s
 
     class Annotation < Subject
-      fields :name, :resource_id
+      field :name, :resource_id
       to_h {{ annotation: name, resource: resource_id }}
       to_s { format "annotation %s on %s", name, resource_id }
     end
 
     class Permission < Subject
-      fields :resource_id, :role_id, :privilege
+      field :resource_id, :role_id, :privilege
       to_h {{ resource: resource_id, role: role_id, privilege: privilege }}
       to_s { format "permission of %s to %s on %s", role_id, privilege, resource_id }
     end
 
     class Resource < Subject
-      fields :resource_id
+      field :resource_id
       to_h {{ resource: resource_id }}
       to_s { format "resource %s", resource_id }
     end
 
     class Role < Subject
-      fields :role_id
+      field :role_id
       to_h {{ role: role_id }}
       to_s { format "role %s", role_id }
     end
 
     class RoleMembership < Subject
-      fields :role_id, :member_id, :ownership
+      field :role_id, :member_id, :ownership
       to_h {{ role: role_id, type => member_id }}
       to_s { format "%sship of %s in %s", type, member_id, role_id }
 
