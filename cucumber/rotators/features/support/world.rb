@@ -24,6 +24,90 @@ module RotatorWorld
   # Polling / Watching for changes
   #
 
+  #def poll_aws_for_N_rotations(var_id:, num_rots:, timeout:)
+  #  @aws_passwords = []
+  #  timer = Timer.new
+  #  error_msg = "Failed to detect #{num_rots} rotations in #{timeout} seconds"
+
+  #  loop do
+
+  #    # NOTE: We rescue here because we don't want errors in these lines
+  #    #       to kill the entire threads.  It's perfectly valid to attempt
+  #    #       to read the variables or access the db when we cannot.
+  #    #
+  #    pw = variable_resource(var_id)&.value rescue nil
+
+  #    add_aws_password(pw) if pw && new_aws_pw?(pw)
+
+  #    return if total_rots >= num_rots
+  #    raise error_msg if timer.has_exceeded?(timeout)
+  #    sleep(0.3)
+  #  end
+  #end
+
+  class VariableApi
+  end
+
+  # NOTE: We rescue here because we don't want errors in these lines
+  #       to kill the entire threads.  It's perfectly valid to attempt
+  #       to read the variables or access the db when we cannot.
+  #
+  # pw = variable_resource(var_id)&.value rescue nil
+  # pw_works_in_db = pg_login_result(db_user, pw) if pw rescue nil
+  PgRotation = Struct.new(:conjur_api) do
+    def current_values
+      { conjur: 'hsda', db: 'hsda' }
+    end
+  end
+
+  RotationHistory = Struct.new(:values, :value_factory) do
+
+    def updated_history
+      value_factory.current_values
+      RotationHistory.new(updated, value_factory)
+    end
+
+    def clean_slate
+      RotationHistory.new([], value_factory)
+    end
+
+    def size
+      values.size
+    end
+  end
+
+  class PollingStrategy
+
+    def initialize(history:, values_needed: 3, timeout: 20)
+      @history       = history
+      @values_needed = values_needed
+      @timeout       = timeout
+    end
+
+    def run
+      timer = Timer.new
+      history = @history.clean_slate
+      loop do
+        history = history.updated
+        return history if history.size >= values_needed
+        raise error_msg if timer.has_exceeded?(timeout)
+        sleep(0.3)
+      end
+    end
+
+    def error_msg
+      "Failed to detect #{@num_rots} rotations in #{@timeout} seconds"
+    end
+  end
+
+  def postgres_rotation_results
+    value_factory = PgRotation.new(VariableApi)
+    rotation_history = RotationHistory.new([], value_factory)
+    polling_strat = PollingStrategy.new(history: rotation_history)
+    polling_strat.results
+  end
+
+
   def poll_for_N_rotations(var_id:, db_user:, num_rots:, timeout:)
     @conjur_passwords = []
     @db_passwords = []
