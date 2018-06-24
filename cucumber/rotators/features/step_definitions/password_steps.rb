@@ -24,6 +24,7 @@ end
 
 Then(/^the generated passwords have length (\d+)$/) do |len_str|
   length    = len_str.to_i
+  p @pg_results
   conjur_pw = @pg_results.last
   expect(conjur_pw.length).to eq(length)
 end
@@ -44,9 +45,9 @@ Given(/^I reset my root policy$/) do
   end
 end
 
-Given(/^I add the value "(.*)" to variable "(.+)"$/) do |val, var|
-  variable = variable_resource(var)
-  variable.add_value(val)
+Given(/^I add the value "(.*)" to variable "(.+)"$/) do |val, var_name|
+  var = variable(var_name)
+  var.add_value(val)
 end
 
 Then(/^I wait for (\d+) seconds?$/) do |num_seconds|
