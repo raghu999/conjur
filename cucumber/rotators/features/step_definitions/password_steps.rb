@@ -8,7 +8,7 @@ end
 
 regex = /^I moniter "(.+)" and db user "(.+)" for (\d+) values in (\d+) seconds$/
 Then(regex) do |var_id, db_user, vals_needed_str, timeout_str|
-  @pg_results = postgres_rotation_results(
+  @pg_pw_history = postgres_password_history(
     var_id: var_id,
     db_user: db_user,
     values_needed: vals_needed_str.to_i,
@@ -19,13 +19,12 @@ end
 Then(/^we find at least (\d+) distinct matching passwords$/) do |num_needed_str|
   # this is not really needed, as an error would have occured before getting
   # here if the values_needed had not been reached
-  expect(@pg_results.uniq.size).to be >= num_needed_str.to_i
+  expect(@pg_pw_history.uniq.size).to be >= num_needed_str.to_i
 end
 
 Then(/^the generated passwords have length (\d+)$/) do |len_str|
   length    = len_str.to_i
-  p @pg_results
-  conjur_pw = @pg_results.last
+  conjur_pw = @pg_pw_history.last
   expect(conjur_pw.length).to eq(length)
 end
 

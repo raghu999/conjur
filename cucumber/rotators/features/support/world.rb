@@ -1,15 +1,6 @@
+# TODO: Explanation of design and how to add a new rotator
+#
 module RotatorWorld
-
-  def variable(var_name)
-    conjur_api.resource("cucumber:variable:#{var_name}")
-  end
-
-  def postgres_rotation_results(var_id:, db_user:, values_needed:, timeout:)
-    variable_meth = method(:variable)
-    value_factory = PgRotation.new(var_id, db_user, variable_meth)
-    polling_strat = PollingStrategy.new(value_factory, values_needed, timeout)
-    polling_strat.results
-  end
 
   # Utility for the postgres rotator
   #
@@ -17,14 +8,38 @@ module RotatorWorld
     system("PGPASSWORD=#{pw} psql -h testdb -U #{user} -c \"#{sql}\"")
   end
 
-  PgRotation ||= Struct.new(:variable_id, :db_user, :variable_meth) do
+  def variable(var_name)
+    conjur_api.resource("cucumber:variable:#{var_name}")
+  end
 
-    # We return nil unless they match, to avoid race conditions with the
-    # rotation process.  The variables being unsynced can be considered a
-    # temporary "bad" state that we ignore and treat as if there are no current
-    # value to retrieve
+  # This wires up and kicks off of the postgres polling process, and then
+  # returns the results of that process: a history of distinct passwords seen
+  # by the polling.
+  #
+  def postgres_password_history(var_id:, db_user:, values_needed:, timeout:)
+    variable_meth = method(:variable)
+    value_factory = PgCurrentPassword.new(var_id, db_user, variable_meth)
+    polling_strat = PollingStrategy.new(value_factory, values_needed, timeout)
+    polling_strat.results
+  end
+
+
+  # This represents the concept of the realtime, current value of the postgres
+  # password, considered as a changing entity within the context of rotation.
+  # 
+  # The "value" of this entity only exists when the actual db password matches
+  # the password in Conjur.  During the ephemeral moments when they're out of
+  # sync, or when either one of the passwords is not available, the
+  # `PgCurrentPassword` is considered to be `nil`.
+  #
+  # This avoids possible race conditions with the actual rotation thread --
+  # it's possible we could "reading" here at the same time the rotation process
+  # has only "written" one of the two passwords that need to be kept in sync.
+  #
+  PgCurrentPassword ||= Struct.new(:var_name, :db_user, :variable_meth) do
+
     def current_value
-      pw = variable_meth.(variable_id)&.value
+      pw = variable_meth.(var_name)&.value
       pw_works_in_db = pg_login_result(db_user, pw) if pw
       pw_works_in_db ? pw : nil
     rescue
@@ -39,6 +54,8 @@ module RotatorWorld
     end
   end
 
+  # TODO more accurate name than value_factory?
+  #
   class PollingStrategy
 
     def initialize(value_factory, values_needed, timeout)
