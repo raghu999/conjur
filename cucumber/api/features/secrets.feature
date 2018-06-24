@@ -72,6 +72,14 @@ Feature: Adding and fetching secrets
     """
     When I successfully GET "/secrets/cucumber/variable/probe?version=1"
     Then the binary result is "v-1"
+    And there is an audit record matching:
+    """
+      <38>1 * * conjur * fetch
+      [auth@43868 user="cucumber:user:eve"]
+      [subject@43868 resource="cucumber:variable:probe" version="1"]
+      [action@43868 operation="fetch"]
+      cucumber:user:eve fetched version 1 of cucumber:variable:probe
+    """
 
   Scenario: Fetching a secret with a non-existant secret version results in a 404 error.
 

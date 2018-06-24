@@ -37,6 +37,8 @@ class SecretsController < RestController
     end
     mime_type ||= 'application/octet-stream'
 
+    audit_fetch @resource, version: version
+
     send_data value, type: mime_type
   end
 
@@ -64,8 +66,17 @@ class SecretsController < RestController
       end
       
       result[variable.resource_id] = variable.secrets.last.value
+      audit_fetch variable
     end
 
     render json: result
+  end
+
+  def audit_fetch resource, version: nil
+    Audit::Event::Fetch.new(
+      resource: resource,
+      version: version,
+      user: current_user
+    ).log_to Audit.logger
   end
 end
