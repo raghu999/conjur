@@ -1,5 +1,8 @@
 # TODO: Explanation of design and how to add a new rotator
 #
+
+require 'aws-sdk'
+
 module RotatorWorld
 
   # Utility for the postgres rotator
@@ -18,25 +21,31 @@ module RotatorWorld
   #
   def postgres_password_history(var_id:, db_user:, values_needed:, timeout:)
     variable_meth = method(:variable)
-    value_factory = PgCurrentPassword.new(var_id, db_user, variable_meth)
-    polling_strat = PollingStrategy.new(value_factory, values_needed, timeout)
-    polling_strat.results
+    polled_value = PgRotatingPassword.new(var_id, db_user, variable_meth)
+    polling = PollingSession.new(polled_value, values_needed, timeout)
+    polling.captured_values
   end
 
+  def aws_credentials_history(values_needed:, timeout:)
+    variable_meth = method(:variable)
+    polled_value = AwsRotatingCredentials.new(variable_meth)
+    polling = PollingSession.new(polled_value, values_needed, timeout)
+    polling.captured_values
+  end
 
-  # This represents the concept of the realtime, current value of the postgres
-  # password, considered as a changing entity within the context of rotation.
+  # This represents a rotating postgres password across time -- a changing
+  # entity with a current_value.
   # 
   # The "value" of this entity only exists when the actual db password matches
   # the password in Conjur.  During the ephemeral moments when they're out of
   # sync, or when either one of the passwords is not available, the
-  # `PgCurrentPassword` is considered to be `nil`.
+  # `PgRotatingPassword` is considered to be `nil`.
   #
   # This avoids possible race conditions with the actual rotation thread --
   # it's possible we could "reading" here at the same time the rotation process
   # has only "written" one of the two passwords that need to be kept in sync.
   #
-  PgCurrentPassword ||= Struct.new(:var_name, :db_user, :variable_meth) do
+  PgRotatingPassword ||= Struct.new(:var_name, :db_user, :variable_meth) do
 
     def current_value
       pw = variable_meth.(var_name)&.value
@@ -46,6 +55,8 @@ module RotatorWorld
       nil
     end
 
+    private
+
     # The host -- the container name of the testdb created by docker-compose --
     # is hardcoded here.  This shouldn't be problematic as there's likely no
     # need to make it dynamic.
@@ -54,17 +65,47 @@ module RotatorWorld
     end
   end
 
-  # TODO more accurate name than value_factory?
+  # Assumes:
+  # 1. awscli is installed.
+  # 2. The test account has the `describe-regions` privilege.
   #
-  class PollingStrategy
+  AwsRotatingCredentials ||= Struct.new(:variable_meth) do
 
-    def initialize(value_factory, values_needed, timeout)
-      @value_factory = value_factory
+    def current_value
+      id = variable_meth.('access_key_id')&.value
+      key = variable_meth.('secret_access_key')&.value
+      return nil unless id && key
+      return nil unless valid_credentials?(id, key)
+      { access_key_id: id, secret_access_key: key}
+    rescue
+      nil
+    end
+
+    private
+
+    def valid_credentials?(id, key)
+      options = { region: 'us-east-1', access_key_id: id, secret_access_key: key }
+      Aws::EC2::Client.new(options).describe_regions
+      true
+    rescue
+      false
+    end
+
+  end
+
+  # A "session" of polling that lasts until we've captured the number of values
+  # specified by "values_needed" or we exceed the timeout limit, in which case
+  # it raises an error.
+  # 
+  class PollingSession
+
+    def initialize(polled_value, values_needed, timeout)
+      @polled_value = polled_value
       @values_needed = values_needed
       @timeout       = timeout
     end
 
-    def results
+    def captured_values
       timer = Timer.new
       history = []
       loop do
@@ -76,7 +117,7 @@ module RotatorWorld
     end
 
     def updated_history(history)
-      cur = @value_factory.current_value
+      cur = @polled_value.current_value
       did_value_change = cur && cur != history.last
       did_value_change ? history + [cur] : history
     end
