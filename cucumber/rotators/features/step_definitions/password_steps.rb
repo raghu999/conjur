@@ -6,33 +6,25 @@ Then(/^I create a db user "(.*?)" with password "(.*?)"$/) do |user, pw|
   run_sql_in_testdb("CREATE DATABASE #{user};")
 end
 
-re = /^I poll "(.+)" and db user "(.+)" for (\d+) rotations in (\d+) seconds$/
-Then(re) do |var, user, num_rots_str, timeout_str|
-  poll_for_N_rotations(
-    var_id: var,
-    db_user: user,
-    num_rots: num_rots_str.to_i,
+regex = /^I moniter "(.+)" and db user "(.+)" for (\d+) values in (\d+) seconds$/
+Then(regex) do |var_id, db_user, vals_needed_str, timeout_str|
+  @pg_results = postgres_rotation_results(
+    var_id: var_id,
+    db_user: db_user,
+    values_needed: vals_needed_str.to_i,
     timeout: timeout_str.to_i
   )
 end
 
-Then(/^the first (\d+) db and conjur passwords match$/) do |num_str|
-  num        = num_str.to_i
-  db_pws     = db_passwords.first(num)
-  conjur_pws = conjur_passwords.first(num)
-  expect(db_pws).to match_array(conjur_pws)
-end
-
-Then(/^the first (\d+) conjur passwords are distinct$/) do |num_str|
-  num        = num_str.to_i
-  conjur_pws = conjur_passwords.first(num)
-  expect(conjur_pws.size).to eq(num)
-  expect(conjur_pws.uniq.size).to eq(num)
+Then(/^we find at least (\d+) distinct matching passwords$/) do |num_needed_str|
+  # this is not really needed, as an error would have occured before getting
+  # here if the values_needed had not been reached
+  expect(@pg_results.uniq.size).to be >= num_needed_str.to_i
 end
 
 Then(/^the generated passwords have length (\d+)$/) do |len_str|
   length    = len_str.to_i
-  conjur_pw = conjur_passwords.last
+  conjur_pw = @pg_results.last
   expect(conjur_pw.length).to eq(length)
 end
 
@@ -56,7 +48,6 @@ Given(/^I add the value "(.*)" to variable "(.+)"$/) do |val, var|
   variable = variable_resource(var)
   variable.add_value(val)
 end
-
 
 Then(/^I wait for (\d+) seconds?$/) do |num_seconds|
   puts "Sleeping #{num_seconds}...."

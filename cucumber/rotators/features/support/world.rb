@@ -1,23 +1,28 @@
 module RotatorWorld
 
-  # stores history of all rotated passwords
+  # just to wrap up a simple interface needed by the rotators
   #
-  attr_reader :db_passwords, :conjur_passwords
-
-  def pg_host
-    'testdb'
+  ConjurApiFacade ||= Struct.new(:conjur_api) do
+    def variable(var_name)
+      conjur_api.resource("cucumber:variable:#{var_name}")
+    end
   end
 
-  def pg_login_result(user, pw)
-    system("PGPASSWORD=#{pw} psql -c \"\\q\" -h #{pg_host} -U #{user}")
+  def variable_resource(var_name)
+    ConjurApiFacade.new(conjur_api).variable(var_name)
   end
 
+  def postgres_rotation_results(var_id:, db_user:, values_needed:, timeout:)
+    api_facade    = ConjurApiFacade.new(conjur_api)
+    value_factory = PgRotation.new(var_id, db_user, api_facade)
+    polling_strat = PollingStrategy.new(value_factory, values_needed, timeout)
+    polling_strat.results
+  end
+
+  # Utility for the postgres rotator
+  #
   def run_sql_in_testdb(sql, user='postgres', pw='postgres_secret')
-    system("PGPASSWORD=#{pw} psql -h #{pg_host} -U #{user} -c \"#{sql}\"")
-  end
-
-  def variable_resource(var)
-    conjur_api.resource("cucumber:variable:#{var}")
+    system("PGPASSWORD=#{pw} psql -h testdb -U #{user} -c \"#{sql}\"")
   end
 
   #
@@ -45,93 +50,57 @@ module RotatorWorld
   #  end
   #end
 
-  class VariableApi
-  end
 
-  # NOTE: We rescue here because we don't want errors in these lines
-  #       to kill the entire threads.  It's perfectly valid to attempt
-  #       to read the variables or access the db when we cannot.
-  #
-  # pw = variable_resource(var_id)&.value rescue nil
-  # pw_works_in_db = pg_login_result(db_user, pw) if pw rescue nil
-  PgRotation = Struct.new(:conjur_api) do
-    def current_values
-      { conjur: 'hsda', db: 'hsda' }
-    end
-  end
 
-  RotationHistory = Struct.new(:values, :value_factory) do
+  PgRotation ||= Struct.new(:variable_id, :db_user, :conjur_api_facade) do
 
-    def updated_history
-      value_factory.current_values
-      RotationHistory.new(updated, value_factory)
+    # We return nil unless they match, to avoid race conditions with the
+    # rotation process.  The variables being unsynced can be considered a
+    # temporary "bad" state that we ignore and treat as if there are no current
+    # value to retrieve
+    def current_value
+      pw = conjur_api_facade.variable(variable_id)&.value
+      pw_works_in_db = pg_login_result(db_user, pw) if pw
+      pw_works_in_db ? pw : nil
+    rescue
+      nil
     end
 
-    def clean_slate
-      RotationHistory.new([], value_factory)
-    end
-
-    def size
-      values.size
+    # The host -- the container name of the testdb created by docker-compose --
+    # is hardcoded here.  This shouldn't be problematic as there's likely no
+    # need to make it dynamic.
+    def pg_login_result(user, pw)
+      system("PGPASSWORD=#{pw} psql -c \"\\q\" -h testdb -U #{user}")
     end
   end
 
   class PollingStrategy
 
-    def initialize(history:, values_needed: 3, timeout: 20)
-      @history       = history
+    def initialize(value_factory, values_needed, timeout)
+      @value_factory = value_factory
       @values_needed = values_needed
       @timeout       = timeout
     end
 
-    def run
+    def results
       timer = Timer.new
-      history = @history.clean_slate
+      history = []
       loop do
-        history = history.updated
-        return history if history.size >= values_needed
-        raise error_msg if timer.has_exceeded?(timeout)
+        history = updated_history(history)
+        return history if history.size >= @values_needed
+        raise error_msg if timer.has_exceeded?(@timeout)
         sleep(0.3)
       end
     end
 
-    def error_msg
-      "Failed to detect #{@num_rots} rotations in #{@timeout} seconds"
+    def updated_history(history)
+      cur = @value_factory.current_value
+      did_value_change = cur != history.last
+      did_value_change ? history + [cur] : history
     end
-  end
 
-  def postgres_rotation_results
-    value_factory = PgRotation.new(VariableApi)
-    rotation_history = RotationHistory.new([], value_factory)
-    polling_strat = PollingStrategy.new(history: rotation_history)
-    polling_strat.results
-  end
-
-
-  def poll_for_N_rotations(var_id:, db_user:, num_rots:, timeout:)
-    @conjur_passwords = []
-    @db_passwords = []
-    timer = Timer.new
-    error_msg = "Failed to detect #{num_rots} rotations in #{timeout} seconds"
-
-    loop do
-
-      # NOTE: We rescue here because we don't want errors in these lines
-      #       to kill the entire threads.  It's perfectly valid to attempt
-      #       to read the variables or access the db when we cannot.
-      #
-      pw = variable_resource(var_id)&.value rescue nil
-      pw_works_in_db = pg_login_result(db_user, pw) if pw rescue nil
-
-      # we only record it if they're synced -- avoids race conditions
-      if pw_works_in_db
-        add_conjur_password(pw) if new_conjur_pw?(pw)
-        add_db_password(pw) if new_db_pw?(pw)
-      end
-
-      return if total_rots >= num_rots
-      raise error_msg if timer.has_exceeded?(timeout)
-      sleep(0.3)
+    def error_msg
+      "Failed to detect #{@values_needed} rotations in #{@timeout} seconds"
     end
   end
 
@@ -148,28 +117,5 @@ module RotatorWorld
       time_elapsed > seconds
     end
   end
-
-  private
-
-  def total_rots
-    [@db_passwords, @conjur_passwords].map(&:size).min
-  end
-
-  def add_db_password(pw)
-    @db_passwords = (@db_passwords || []) << pw
-  end
-
-  def add_conjur_password(pw)
-    @conjur_passwords = (@conjur_passwords || []) << pw
-  end
-
-  def new_conjur_pw?(pw)
-    pw != @conjur_passwords.last
-  end
-
-  def new_db_pw?(pw)
-    pw != @db_passwords.last
-  end
-
 
 end
